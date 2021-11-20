@@ -1,0 +1,17 @@
+{
+  "name": "krakenws-client",
+  "version": "0.1.0",
+  "description": "Javascript client for interfacing with kraken's web socket api",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "kraken",
+    "api",
+    "crypto",
+    "websocket"
+  ],
+  "author": "Andrew Mendez",
+  "license": "MIT"
+}
