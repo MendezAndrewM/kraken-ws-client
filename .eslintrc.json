@@ -1,0 +1,68 @@
+{
+    "env": {
+			"es2021": true,
+			"jest": true,
+			"node": true,
+			"browser": false
+    },
+    "extends": [
+        "eslint:recommended"
+    ],
+		"parser": "@babel/eslint-parser",
+    "parserOptions": {
+        "ecmaFeatures": {
+            "classes": true,
+						"impliedStrict": true
+        },
+        "ecmaVersion": 12,
+        "sourceType": "script"
+    },
+    "plugins": [
+			"@babel"
+		],
+    "rules": {
+        "indent": [
+            "error",
+            "tab"
+        ],
+        "linebreak-style": [
+            "error",
+            "unix"
+        ],
+        "quotes": [
+            "error",
+            "single"
+        ],
+        "semi": [
+            "error",
+            "always"
+        ],
+        "no-console": [
+            "warn",
+            { "allow": ["warn", "error"]}
+        ],
+        "no-extra-semi":"error",
+        "eqeqeq": "error",
+        "no-trailing-spaces": ["error", {
+            "ignoreComments": true
+        }],
+        "no-multiple-empty-lines": ["error", {
+            "max": 1,
+            "maxEOF": 0,
+            "maxBOF": 0
+        }],
+				"no-useless-catch": ["allow"],
+        "no-irregular-whitespace": ["error", {
+            "skipStrings": true,
+            "skipComments": true,
+            "skipRegExps": true,
+            "skipTemplates": true
+        }],
+				"object-curly-spacing": ["error", "always"],
+				"@babel/new-cap": "error",
+				"@babel/no-invalid-this": "error",
+				"@babel/no-unused-expressions": "error",
+				"@babel/semi": "error"
+    },
+    "settings": {}
+}
