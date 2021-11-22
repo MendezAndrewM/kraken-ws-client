@@ -1,38 +1,33 @@
-const ws = require('ws');
+const Ws = require('ws');
 const Kraken = require('kraken-api');
 
-const krakenRouter = require("./utils/onMessageHandler");
-const { KRAKEN_WS_ENDPOINT } = require('../constants');
+const krakenRouter = require('./utils/onMessageHandler');
+const { KRAKEN_WS_ENDPOINT } = require('./constants');
+const { nonFunctionError, nonFunctionArrayError } = require('./utils/errorTypes');
 
 const doNothing = () => null;
 class KrakenPublicChannel extends Kraken {
 	#onMessage = krakenRouter;
-  #client;
+	#client;
 
-  constructor(
-			wsKey,
-			privateKey,
-			config = {
-				afterOpen=null,
-				apiType=null,
-				loggingAgent=nullLogger,
-			}
+	constructor(
+		wsKey,
+		privateKey,
+		config
 	) {
-    super(wsKey, privateKey);
+		super(wsKey, privateKey);
 
-    this.loggingAgent = config.loggingAgent;
-    this.afterOpen = config.afterOpen;
-		this.apiType = config.apiType
+		this.logger = config.logger;
+		this.apiType = config.apiType;
 
-    this.subscriptions = { private: {} }
-		this.systemStatus = { status: "uninitiated" }
-		
-    this.onHeartBeatEventCallBack = false;
-		this.connectionErrorCallback = null;
+		this.subscriptions = { private: {} };
+		this.systemStatus = { status: 'uninitiated' };
+
+		this.onHeartBeatEventCallBack = false;
 		this.onPongCallback = null;
 		this.publicEventCallbacks = []; // ??? - Probably the wrong way to do this
 		this.onClose = doNothing;
-  }
+	}
 
 	/**
 	 * Optional wrapper for customizable error handling. Thows the error
@@ -41,79 +36,79 @@ class KrakenPublicChannel extends Kraken {
 	 * @param {Error} error Connection error from Kraken API 
 	 * @param {Function} callback Customizable
 	 */
-  #onConnectionError(error) {
-    if (this.connectionErrorCallback) return callback(error);
-    else throw error;
-  }
+	onConnectionError(error) {
+		if (this.connectionErrorHandler) this.connectionErrorHandler(error);
+		else throw error;
+	}
 
-  onOpen() { // Customize or Configure
-    if (afterOpen = "websocket") {}
-  }
+	onOpen() { // Customize or Configure
+		this.logger('Connected!');
+	}
 
-  #onPongEvent(data) {
-    if (this.onPongCallback) return callback(data);
-    else return;
-  }
+	#onPongEvent(data) {
+		if (this.onPongCallback) return callback(data);
+		else return;
+	}
 
-  onSystemStatusChange({ connectionID, status, version }) {
-    const timestamp = Date.now();
-    this.systemStatus = {
-      connectionID,
-      status,
-      version,
-      timestamp,
-    }
-    const log = { 'System Status Changed': this.systemStatus }
-
-    this.loggingAgent(log);
-  }
-
-  onSubscriptionStatusEvent(data) {
-    this.showLogs && console.log(data);
-    const { channelName, pair, status } = data;
-
-    if (!this.subscriptions.hasOwnProperty(channelName)) {
-      this.subscriptions[channelName] = {};
-    }
-    this.subscriptions[channelName][pair] = {
-      status,
-      lastUpdated: Date.now(),
-      ...data.subscription
-    }
-    
-    this.loggingAgent(data);
-  }
-
-  onHeartBeatEvent(event) {
-    if (this.showHeartbeat) return onHeartBeatEventCallBack(event);
-    else return;
-  }
-
-  onPublicEvent(data) {
+	onPublicMessage(data) {
 		//TODO: Figure out how to broadcast these by type
-    const [ channel_id, event_data, event_type, pair ] = data;
-    const parsedData = { channel_id, event_data, event_type, pair };
-    this.publicEventCallbacks.forEach(callback => callback(parsedData));
-  }
+		const [ channel_id, event_data, event_type, pair ] = data;
+		const parsedData = { channel_id, event_data, event_type, pair };
+		this.publicEventCallbacks.forEach(callback => callback(parsedData));
+	}
 
-  onClose(data) {
-    if (this.onCloseEvent) this.onCloseEvent(data);
-  }
+	onSystemStatusChange({ connectionID, status, version }) {
+		const timestamp = Date.now();
+		this.systemStatus = {
+			connectionID,
+			status,
+			version,
+			timestamp,
+		};
+		const log = { 'System Status Event': this.systemStatus };
 
-  connectSocket() {
-    const client = new ws(KRAKEN_WS_ENDPOINT);
+		this.logger(log);
+	}
 
-    client.on('open', () => this.onOpen());
-    client.on('message', (message) => this.#onMessage(message));
-    client.on('pong', (data) => this.#onPongEvent(data.toString()));
-    client.on('unexpected-response', (data) => { throw new Error(data) });
-    client.on('error', (err) => this.#onConnectionError(err));
-    client.on('close', (data) => this.onClose(data));
+	onSubscriptionStatusEvent(data) {
+		this.showLogs && console.log(data);
+		const { channelName, pair, status } = data;
 
-    this.#client = client;
-  }
+		if (!this.subscriptions.hasOwnProperty(channelName)) {
+			this.subscriptions[channelName] = {};
+		}
+		this.subscriptions[channelName][pair] = {
+			status,
+			lastUpdated: Date.now(),
+			...data.subscription
+		};
 
-/**
+		this.logger(data);
+	}
+
+	onHeartBeat(event) {
+		if (this.showHeartbeat) return this.onHeartBeatEventCallBack(event);
+		else return;
+	}
+
+	onClose(data) {
+		if (this.onCloseEvent) this.onCloseEvent(data);
+	}
+
+	connectSocket() {
+		const client = new Ws(KRAKEN_WS_ENDPOINT);
+
+		client.on('open', () => this.onOpen());
+		client.on('message', (message) => this.#onMessage(message));
+		client.on('pong', (data) => this.#onPongEvent(data.toString()));
+		client.on('unexpected-response', (data) => { throw new Error(data); });
+		client.on('error', (err) => this.onConnectionError(err));
+		client.on('close', (data) => this.onClose(data));
+
+		this.#client = client;
+	}
+
+	/**
  * Handles subscribing or unsubscribing to channels.
  * 
  * Details for the subscribe/unsubscribe can be found on the Kraken docs-> https://docs.kraken.com/websockets/#message-subscribe
@@ -127,53 +122,70 @@ class KrakenPublicChannel extends Kraken {
  * 
  * @emits websocket.send() sends the formated payload to the Kraken websocket service
  */
-  async subscriptionService(subscribe, name, pairs, options = {}) {
-    const payload = {
-      event: subscribe,
-      subscription: {
-        name
-      }
-    };
-    if (pairs) {
-      payload.pair = pairs;
-    }
-    Object.keys(options).forEach(option => payload.subscription[option] = options[option]);
+	async subscriptionService(subscribe, name, pairs, options = {}) {
+		const payload = {
+			event: subscribe,
+			subscription: {
+				name
+			}
+		};
+		if (pairs) {
+			payload.pair = pairs;
+		}
+		Object.keys(options).forEach(option => payload.subscription[option] = options[option]);
 
-    return this.#client.send(JSON.stringify(payload));
-  }
+		return this.emitEvent(payload);
+	}
 
-  pingServer(reqid) {
-    const ping = JSON.stringify({ event: 'ping', reqid });
-    this.#client.send(ping);
-  }
+	pingServer(reqid) {
+		this.emitEvent({ event: 'ping', reqid });
+	}
 
 	/**
 	 * send data straight to the kraken api. See Krakens documentaion for formatting
 	 * 
 	 * @param {object} data see kraken docs for formatting
 	 */
-  emitEvent(data) {
-    this.#client.send(JSON.stringify(data));
-  }
-
-	set onHeartBeatEvent(fn) {
-		this.onHeartBeatEventCallBack = fn;
+	emitEvent(data) {
+		this.#client.send(JSON.stringify(data));
 	}
 
-	set onConnectionErrorEvent(fn) {
-		this.connectionErrorCallback = fn;
+	set onOpenEvent(fn) {
+		if (typeof fn === 'function') this.onOpen = fn;
+		else throw nonFunctionError(fn);
+	}
+
+	set onHeartBeatEvent(fn) {
+		if (typeof fn === 'function')  this.onHeartBeatEventCallBack = fn;
+		else throw nonFunctionError(fn);
+	}
+
+	/**
+	 * @param {(arg0: Error) => void} fn
+	 */
+	set connectionErrorHandler(fn) {
+		if (typeof fn === 'function')  this.connectionErrorHandler = fn;
+		else throw nonFunctionError(fn);
 	}
 
 	set onPongEvent(fn) {
-		this.onPongCallback = fn;
+		if (typeof fn === 'function')  this.onPongCallback = fn;
+		else throw nonFunctionError(fn);
 	}
 
 	set onPublicEvent(arr) {
+		if (!Array.isArray(arr)) throw nonFunctionArrayError(arr);
+
+		arr.forEach(i => {
+			if (typeof i !== 'function') throw nonFunctionError(i);
+		});
+
 		this.publicEventCallbacks = arr;
 	}
 
 	set onCloseEvent(fn) {
-		this.onClose = fn;
+		if (typeof fn === 'function') this.onClose = fn;
+		else throw nonFunctionError(fn);
 	}
 }
 
