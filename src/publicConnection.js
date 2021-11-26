@@ -3,11 +3,10 @@ const Kraken = require('kraken-api');
 
 const krakenRouter = require('./utils/onMessageHandler');
 const { KRAKEN_WS_ENDPOINT } = require('./constants');
-const { nonFunctionError, nonFunctionArrayError } = require('./utils/errorTypes');
+const { nonFunctionError } = require('./utils/errorTypes');
 
-const doNothing = () => null;
 class KrakenPublicChannel extends Kraken {
-	#onMessage = krakenRouter;
+	#onMessage = krakenRouter.bind(this);
 	#client;
 
 	constructor(
@@ -20,13 +19,10 @@ class KrakenPublicChannel extends Kraken {
 		this.logger = config.logger;
 		this.apiType = config.apiType;
 
-		this.subscriptions = { private: {} };
+		this.subscriptions = {};
 		this.systemStatus = { status: 'uninitiated' };
 
-		this.onHeartBeatEventCallBack = false;
-		this.onPongCallback = null;
-		this.publicEventCallbacks = []; // ??? - Probably the wrong way to do this
-		this.onClose = doNothing;
+		this.publicMessageEvent = this.logger;
 	}
 
 	/**
@@ -37,26 +33,43 @@ class KrakenPublicChannel extends Kraken {
 	 * @param {Function} callback Customizable
 	 */
 	onConnectionError(error) {
-		if (this.connectionErrorHandler) this.connectionErrorHandler(error);
+		if (this.connectionErrorHandler) return this.connectionErrorHandler(error);
 		else throw error;
 	}
 
-	onOpen() { // Customize or Configure
+	// TODO: Settup controller
+	onOpen() {
 		this.logger('Connected!');
 	}
 
-	#onPongEvent(data) {
-		if (this.onPongCallback) return callback(data);
+	/**
+	 * Executes when a pong event is recieved.
+	 * Does nothing by default. This can be configured by defining the "onPongHandler"
+	 * property
+	 * 
+	 * @param {any} data Optional - never sent from Kraken API
+	 */
+	onPong(data) {
+		if (this.onPongHandler) return this.onPongHandler(data);
 		else return;
 	}
 
+	/**
+	 * Parses event message before passing it to the "publicMessageEvent" function
+	 * 
+	 * @param {any[]} data message data from socket host
+	 */
 	onPublicMessage(data) {
-		//TODO: Figure out how to broadcast these by type
 		const [ channel_id, event_data, event_type, pair ] = data;
 		const parsedData = { channel_id, event_data, event_type, pair };
-		this.publicEventCallbacks.forEach(callback => callback(parsedData));
+		return this.publicMessageEvent(parsedData);
 	}
 
+	/**
+	 * Formats and logs changes to the connection status
+	 * 
+	 * @param {Object} data new status event from host
+	 */
 	onSystemStatusChange({ connectionID, status, version }) {
 		const timestamp = Date.now();
 		this.systemStatus = {
@@ -70,11 +83,15 @@ class KrakenPublicChannel extends Kraken {
 		this.logger(log);
 	}
 
+	/**
+	 * Formats and logs changes to a subscription status
+	 * 
+	 * @param {Object} data new status event from host
+	 */
 	onSubscriptionStatusEvent(data) {
-		this.showLogs && console.log(data);
 		const { channelName, pair, status } = data;
 
-		if (!this.subscriptions.hasOwnProperty(channelName)) {
+		if (!this.subscriptions[channelName]) {
 			this.subscriptions[channelName] = {};
 		}
 		this.subscriptions[channelName][pair] = {
@@ -86,24 +103,47 @@ class KrakenPublicChannel extends Kraken {
 		this.logger(data);
 	}
 
+	/**
+	 * Executes when a heartBeat event is sent from the socket host.
+	 * Does nothing by default. This can be configured by defining the "heartBeatEvent"
+	 * property
+	 * 
+	 * @param {Object} event { event: 'heartbeat' }
+	 */
 	onHeartBeat(event) {
-		if (this.showHeartbeat) return this.onHeartBeatEventCallBack(event);
+		if (this.heartBeatEvent) return this.heartBeatEvent(event);
 		else return;
 	}
 
+	/**
+	 * Executes when the socket connection is closed.
+	 * Does nothing by default. This can be configured by defining the "onCloseEventHandler"
+	 * property
+	 * 
+	 * @param {any} data Optional - never sent from Kraken API
+	 */
 	onClose(data) {
-		if (this.onCloseEvent) this.onCloseEvent(data);
+		if (this.onCloseEventHandler) return this.onCloseEventHandler(data);
+		return;
 	}
 
+	/* istanbul ignore next */
+	onUnexpectedResponse(data) {
+		throw new Error(data);
+	}
+
+	/**
+	 * Connects to web socket host and sets the event listeners.
+	 */
 	connectSocket() {
 		const client = new Ws(KRAKEN_WS_ENDPOINT);
 
-		client.on('open', () => this.onOpen());
-		client.on('message', (message) => this.#onMessage(message));
-		client.on('pong', (data) => this.#onPongEvent(data.toString()));
-		client.on('unexpected-response', (data) => { throw new Error(data); });
-		client.on('error', (err) => this.onConnectionError(err));
-		client.on('close', (data) => this.onClose(data));
+		client.on('open', this.onOpen);
+		client.on('message', this.#onMessage);
+		client.on('pong', this.onPong);
+		client.on('unexpected-response', this.onUnexpectedResponse);
+		client.on('error', this.onConnectionError);
+		client.on('close', this.onClose);
 
 		this.#client = client;
 	}
@@ -119,8 +159,6 @@ class KrakenPublicChannel extends Kraken {
  * @param {object} options subscription object as defined on Kraken's API
  * @param {number} options.depth Optional - depth associated with book subscription in number of levels each side, default 10. Valid Options are: 10, 25, 100, 500, 1000
  * @param {number} options.interval Optional - Time interval associated with ohlc subscription in minutes. Default 1. Valid Interval values: 1|5|15|30|60|240|1440|10080|21600
- * 
- * @emits websocket.send() sends the formated payload to the Kraken websocket service
  */
 	async subscriptionService(subscribe, name, pairs, options = {}) {
 		const payload = {
@@ -142,49 +180,59 @@ class KrakenPublicChannel extends Kraken {
 	}
 
 	/**
-	 * send data straight to the kraken api. See Krakens documentaion for formatting
-	 * 
+	 * send data to the kraken api. See Krakens documentaion for formatting 
 	 * @param {object} data see kraken docs for formatting
+	 * @emits websocket.send() sends the formated payload to the Kraken websocket service
 	 */
 	emitEvent(data) {
 		this.#client.send(JSON.stringify(data));
 	}
 
+	/**
+	 * @param {() => any} fn 
+	 */ /* istanbul ignore next */
 	set onOpenEvent(fn) {
 		if (typeof fn === 'function') this.onOpen = fn;
 		else throw nonFunctionError(fn);
 	}
 
+	/**
+	 * @param {() => any} fn 
+	 */ /* istanbul ignore next */
 	set onHeartBeatEvent(fn) {
-		if (typeof fn === 'function')  this.onHeartBeatEventCallBack = fn;
+		if (typeof fn === 'function')  this.heartBeatEvent = fn;
 		else throw nonFunctionError(fn);
 	}
 
 	/**
-	 * @param {(arg0: Error) => void} fn
-	 */
+	 * @param {() => any} fn 
+	 */ /* istanbul ignore next */
 	set connectionErrorHandler(fn) {
 		if (typeof fn === 'function')  this.connectionErrorHandler = fn;
 		else throw nonFunctionError(fn);
 	}
 
+	/**
+	 * @param {() => any} fn 
+	 */ /* istanbul ignore next */
 	set onPongEvent(fn) {
-		if (typeof fn === 'function')  this.onPongCallback = fn;
+		if (typeof fn === 'function')  this.onPongHandler = fn;
 		else throw nonFunctionError(fn);
 	}
 
-	set onPublicEvent(arr) {
-		if (!Array.isArray(arr)) throw nonFunctionArrayError(arr);
-
-		arr.forEach(i => {
-			if (typeof i !== 'function') throw nonFunctionError(i);
-		});
-
-		this.publicEventCallbacks = arr;
+	/**
+	 * @param {() => any} fn 
+	 */ /* istanbul ignore next */
+	set onPublicEvent(fn) {
+		if (typeof fn === 'function')  this.publicMessageEvent = fn;
+		else throw nonFunctionError(fn);
 	}
 
+	/**
+	 * @param {() => any} fn 
+	 */ /* istanbul ignore next */
 	set onCloseEvent(fn) {
-		if (typeof fn === 'function') this.onClose = fn;
+		if (typeof fn === 'function') this.onCloseEventHandler = fn;
 		else throw nonFunctionError(fn);
 	}
 }

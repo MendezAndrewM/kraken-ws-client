@@ -8,7 +8,8 @@ module.exports = {
 	collectCoverage: true,
 	coverageReporters: [
 		'json',
-		'html'
+		'html',
+		'text'
 	],
 	collectCoverageFrom: ['src/**/*.js'],
 	moduleDirectories: ['node_modules', 'src', 'test'],

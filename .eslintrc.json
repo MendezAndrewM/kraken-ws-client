@@ -51,7 +51,7 @@
             "maxEOF": 0,
             "maxBOF": 0
         }],
-				"no-useless-catch": ["allow"],
+				"no-useless-catch": [0],
         "no-irregular-whitespace": ["error", {
             "skipStrings": true,
             "skipComments": true,
