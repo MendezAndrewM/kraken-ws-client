@@ -18,10 +18,9 @@ class KrakenPublicChannel extends Kraken {
 
 		this.logger = config.logger;
 		this.apiType = config.apiType;
-
+		this.socketHost = KRAKEN_WS_ENDPOINT;
 		this.subscriptions = {};
 		this.systemStatus = { status: 'uninitiated' };
-
 		this.publicMessageEvent = this.logger;
 	}
 
@@ -136,7 +135,7 @@ class KrakenPublicChannel extends Kraken {
 	 * Connects to web socket host and sets the event listeners.
 	 */
 	connectSocket() {
-		const client = new Ws(KRAKEN_WS_ENDPOINT);
+		const client = new Ws(this.socketHost);
 
 		client.on('open', this.onOpen);
 		client.on('message', this.#onMessage);
@@ -186,6 +185,11 @@ class KrakenPublicChannel extends Kraken {
 	 */
 	emitEvent(data) {
 		this.#client.send(JSON.stringify(data));
+	}
+
+	/* istanbul ignore next */
+	disconnectSocket() {
+		this.#client.close();
 	}
 
 	/**

@@ -12,7 +12,7 @@ function krakenMessageRouter(message) {
 			this.onSystemStatusChange(data);
 			break;
 		case 'pong':
-			this.onPongEvent(data);
+			this.onPong(data);
 			break;
 		case 'heartbeat':
 			this.onHeartBeat(data);

@@ -11,6 +11,7 @@ jest.mock('kraken-api');
 const mockSocketClient = {
 	send: jest.fn(),
 	on: jest.fn(),
+	close: jest.fn(),
 };
 
 const mockApiKey = 'secret';
