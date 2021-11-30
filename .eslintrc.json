@@ -58,11 +58,7 @@
             "skipRegExps": true,
             "skipTemplates": true
         }],
-				"object-curly-spacing": ["error", "always"],
-				"@babel/new-cap": "error",
-				"@babel/no-invalid-this": "error",
-				"@babel/no-unused-expressions": "error",
-				"@babel/semi": "error"
+				"object-curly-spacing": ["error", "always"]
     },
     "settings": {}
 }

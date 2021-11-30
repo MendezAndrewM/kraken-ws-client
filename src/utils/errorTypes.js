@@ -4,6 +4,6 @@ const nonFunctionError = (input) => {
 
 const nonFunctionArrayError = (input) => {
 	return new Error(`Expected an Array of function(s). Recieved: ${typeof input}`);
-}
+};
 
-module.exports = {nonFunctionError, nonFunctionArrayError};
+module.exports = { nonFunctionError, nonFunctionArrayError };

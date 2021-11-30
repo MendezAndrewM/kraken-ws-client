@@ -1,4 +1,5 @@
 const KrakenPrivateChannel = require('../../src/privateConnection');
+const MockDate = require('mockdate');
 
 jest.mock('kraken-api');
 
@@ -9,11 +10,14 @@ const mockConfig = {
 };
 
 describe('KrakenPrivateChannel', () => {
+	const timestampMock = Date.now();
 	let sut;
 
 	beforeEach(() => {
 		jest.clearAllMocks();
 		sut = new KrakenPrivateChannel(mockApiKey, mockPrivateKey, mockConfig);
+
+		MockDate.set(timestampMock);
 	});
 
 	describe('getWsToken', () => {
@@ -102,7 +106,26 @@ describe('KrakenPrivateChannel', () => {
 				'event': 'subscribe',
 				'subscription': {
 					'name': 'ownTrades',
-					'token': 'secret'
+					'token': 'secret',
+				}
+			});
+		});
+
+		it('should add the add additional options to the payload if provided', async () => {
+			const eventEmiterMock = jest.spyOn(sut, 'emitEvent').mockImplementation(jest.fn);
+			const stayFreshMock = jest.spyOn(sut, 'stayFresh')
+				.mockImplementationOnce(() => { sut.wsToken = 'secret'; });
+
+			await sut.subscriptionService('subscribe', 'ownTrades', { optionOne: 'foo', optionTwo: 'foo' });
+
+			expect(stayFreshMock).toHaveBeenCalledTimes(1);
+			expect(eventEmiterMock).toHaveBeenCalledWith({
+				'event': 'subscribe',
+				'subscription': {
+					'name': 'ownTrades',
+					'token': 'secret',
+					'optionOne': 'foo',
+					'optionTwo': 'foo'
 				}
 			});
 		});
@@ -111,28 +134,27 @@ describe('KrakenPrivateChannel', () => {
 	describe('onSubscriptionStatusEvent', () => {
 		sut = new KrakenPrivateChannel(mockApiKey, mockPrivateKey, mockConfig);
 
-
+		const openOrdersStatusEvent = {
+			channelName: 'openOrders',
+			event: 'subscriptionStatus',
+			status: 'subscribed',
+			subscription: { maxratecount: 125, name: 'openOrders' }
+		};
 		const errorStatus = {
 			status: 'error',
 			errorMessage: 'mock error'
 		};
 
 		it('should add the subscription to the "subscriptions" property', () => {
-			sut.onSubscriptionStatusEvent(ethTickerSubscription);s
+			sut.onSubscriptionStatusEvent(openOrdersStatusEvent);
 
-			expect(sut.logger).toHaveBeenCalledTimes(2);
+			expect(sut.logger).toHaveBeenCalledTimes(1);
 			expect(sut.subscriptions).toEqual({
-				ticker: {
-					'ETH/USD': {
-						status: 'subscribed',
-						lastUpdated: timestampMock,
-						name: 'ticker'
-					},
-					'ATOM/USD': {
-						status: 'subscribed',
-						lastUpdated: timestampMock,
-						name: 'ticker'
-					},
+				openOrders: {
+					status: 'subscribed',
+					lastUpdated: timestampMock,
+					name: 'openOrders',
+					maxratecount: 125
 				}
 			});
 
