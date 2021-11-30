@@ -61,53 +61,105 @@ describe('KrakenPrivateChannel', () => {
 			Object.defineProperty(sut, 'isFresh', {
 				get: jest.fn(() => true),
 			});
-			const result = sut.stayFresh();
+			sut.stayFresh();
 
-			expect(result).toBe(undefined);
 			expect(getTokenMock).not.toHaveBeenCalled();
 		});
 
-		it('should call "getWsToken" if a valid token does not exist', () => {
-			const getTokenMock = jest.spyOn(sut, 'getWsToken');
+		it('should call "getWsToken" if a valid token does not exist', async () => {
+			const getTokenMock = jest.spyOn(sut, 'getWsToken').mockImplementation(jest.fn);
 			Object.defineProperty(sut, 'isFresh', {
 				get: jest.fn(() => false),
 			});
-			sut.stayFresh();
+			await sut.stayFresh();
 
 			expect(getTokenMock).toHaveBeenCalledTimes(1);
 		});
+
+		it('should set an interval to remain fresh', async () => {
+			const getTokenMock = jest.spyOn(sut, 'getWsToken').mockImplementation(jest.fn);
+			const intervalMock = jest.spyOn(global, 'setInterval').mockImplementation(jest.fn);
+			Object.defineProperty(sut, 'isFresh', {
+				get: jest.fn(() => false),
+			});
+			await sut.stayFresh();
+
+			expect(getTokenMock).toHaveBeenCalledTimes(1);
+			expect(intervalMock).toHaveBeenCalled();
+		});
 	});
 
-	describe('privateSubscriptionService', () => {
-		it('should add the socket token to a subscription call', () => {
-			const subscriptionServiceMock = jest.spyOn(sut, 'subscriptionService');
+	describe('subscriptionService', () => {
+		it('should add the socket token to a subscription call', async () => {
+			const eventEmiterMock = jest.spyOn(sut, 'emitEvent').mockImplementation(jest.fn);
 			const stayFreshMock = jest.spyOn(sut, 'stayFresh')
-				.mockImplementationOnce(() => sut.setWsToken('secret'));
+				.mockImplementationOnce(() => { sut.wsToken = 'secret'; });
 
-			sut.privateSubscriptionService('subscribe', 'ownTrades');
+			await sut.subscriptionService('subscribe', 'ownTrades');
 
 			expect(stayFreshMock).toHaveBeenCalledTimes(1);
-			expect(subscriptionServiceMock).toHaveBeenCalledWith(
-				'subscribe',
-				'ownTrades',
-				null,
-				{ token: 'secret' }
-			);
+			expect(eventEmiterMock).toHaveBeenCalledWith({
+				'event': 'subscribe',
+				'subscription': {
+					'name': 'ownTrades',
+					'token': 'secret'
+				}
+			});
+		});
+	});
+
+	describe('onSubscriptionStatusEvent', () => {
+		sut = new KrakenPrivateChannel(mockApiKey, mockPrivateKey, mockConfig);
+
+
+		const errorStatus = {
+			status: 'error',
+			errorMessage: 'mock error'
+		};
+
+		it('should add the subscription to the "subscriptions" property', () => {
+			sut.onSubscriptionStatusEvent(ethTickerSubscription);s
+
+			expect(sut.logger).toHaveBeenCalledTimes(2);
+			expect(sut.subscriptions).toEqual({
+				ticker: {
+					'ETH/USD': {
+						status: 'subscribed',
+						lastUpdated: timestampMock,
+						name: 'ticker'
+					},
+					'ATOM/USD': {
+						status: 'subscribed',
+						lastUpdated: timestampMock,
+						name: 'ticker'
+					},
+				}
+			});
+
+		});
+
+		it('should throw if an error status is recieved', () => {
+			try {
+				sut.onSubscriptionStatusEvent(errorStatus);
+			} catch (err) {
+				expect(sut.onSubscriptionStatusEvent).toThrow();
+				expect(err).toEqual(Error('mock error'));
+			}
 		});
 	});
 
 	describe('addOrder', () => {
-		it('literally just formats the request and sends to the socket host', () => {
+		it('literally just formats the request and sends to the socket host', async () => {
 			const eventEmiterMock = jest.spyOn(sut, 'emitEvent').mockImplementation(jest.fn);
 			const stayFreshMock = jest.spyOn(sut, 'stayFresh')
-				.mockImplementationOnce(() => sut.setWsToken('secret'));
+				.mockImplementationOnce(() => { sut.wsToken = 'secret'; });
 			const reqId = 42;
 			const mockRequest = {
 				type: 'buy',
 				pair: 'ATOM/USD',
 				price: 1234.56789
 			};
-			sut.addOrder(mockRequest, reqId);
+			await sut.addOrder(mockRequest, reqId);
 
 			expect(stayFreshMock).toHaveBeenCalledTimes(1);
 			expect(eventEmiterMock).toHaveBeenCalledTimes(1);
@@ -123,14 +175,14 @@ describe('KrakenPrivateChannel', () => {
 	});
 
 	describe('cancelOrder', () => {
-		it('is not really even worth testing', () => {
+		it('is not really even worth testing', async () => {
 			const eventEmiterMock = jest.spyOn(sut, 'emitEvent').mockImplementation(jest.fn);
 			const stayFreshMock = jest.spyOn(sut, 'stayFresh')
-				.mockImplementationOnce(() => sut.setWsToken('secret'));
+				.mockImplementationOnce(() => { sut.wsToken = 'secret'; });
 			const mockOrders = ['mock-order-id'];
 			const mockReqId = 42;
 
-			sut.cancelOrder(mockOrders, mockReqId);
+			await sut.cancelOrder(mockOrders, mockReqId);
 
 			expect(stayFreshMock).toHaveBeenCalledTimes(1);
 			expect(eventEmiterMock).toHaveBeenCalledTimes(1);
@@ -144,13 +196,13 @@ describe('KrakenPrivateChannel', () => {
 	});
 
 	describe('cancelAllOrders', () => {
-		it('sends a request to cancel all orders', () => {
+		it('sends a request to cancel all orders', async () => {
 			const eventEmiterMock = jest.spyOn(sut, 'emitEvent').mockImplementation(jest.fn);
 			const stayFreshMock = jest.spyOn(sut, 'stayFresh')
-				.mockImplementationOnce(() => sut.setWsToken('secret'));
+				.mockImplementationOnce(() => { sut.wsToken = 'secret'; });
 			const mockReqId = 42;
 
-			sut.cancelAllOrders(mockReqId);
+			await sut.cancelAllOrders(mockReqId);
 
 			expect(stayFreshMock).toHaveBeenCalledTimes(1);
 			expect(eventEmiterMock).toHaveBeenCalledTimes(1);
@@ -163,13 +215,13 @@ describe('KrakenPrivateChannel', () => {
 	});
 
 	describe('cancelAllOrdersAfter', () => {
-		it('sends a request to cancal all orders on a specified timeout', () => {
+		it('sends a request to cancal all orders on a specified timeout', async () => {
 			const eventEmiterMock = jest.spyOn(sut, 'emitEvent').mockImplementation(jest.fn);
 			const stayFreshMock = jest.spyOn(sut, 'stayFresh')
-				.mockImplementationOnce(() => sut.setWsToken('secret'));
+				.mockImplementationOnce(() => { sut.wsToken = 'secret'; });
 			const mockTimeout = 30000;
 
-			sut.cancelAllOrdersAfter(mockTimeout);
+			await sut.cancelAllOrdersAfter(mockTimeout);
 
 			expect(stayFreshMock).toHaveBeenCalledTimes(1);
 			expect(eventEmiterMock).toHaveBeenCalledTimes(1);

@@ -1,21 +1,33 @@
-const KrakenPub = require('./publicConnection');
+const KrakenSocket = require('./KrakenConnection');
 const { KRAKEN_WS_AUTH_ENDPOINT } = require('./constants');
 const { nonFunctionError } = require('./utils/errorTypes');
 
-class KrakenPrivateChannel extends KrakenPub {
+class KrakenPrivateChannel extends KrakenSocket {
 	#WS_TOKEN;
 	#TOKEN_EXPIRATION_TIME;
+	#REFRESH_INTERVAL;
 
 	constructor(wsKey, privateKey, config) {
 		super(wsKey, privateKey, config);
 
 		this.socketHost = KRAKEN_WS_AUTH_ENDPOINT;
+		this.subscriptions = {};
+		this.channels = {
+			'openOrders': this.logger,
+			'ownTrades': this.logger
+		};
+		this.onEvent['subscriptionStatus'] = this.onSubscriptionStatusEvent,
+		this.onEvent['addOrderStatus'] = this.logger;
+		this.onEvent['cancelOrderStatus'] = this.logger;
+		this.onEvent['cancelAllStatus'] = this.logger;
+		this.onEvent['cancelAllOrdersAfterStatus'] = this.logger;
 	}
 
 	/**
 	 * Fetches and sets the WS token required to send private messages to Kraken
+	 * @returns {number} seconds until token expires
 	 */
-	async getWsToken() {
+	getWsToken = async () => {
 		let fetchResponse;
 
 		try {
@@ -27,42 +39,23 @@ class KrakenPrivateChannel extends KrakenPub {
 
 		if (error.length) throw new Error(error);
 
+		const milisecondsUntilExpiration = expires * 1000;
 		this.#WS_TOKEN = token;
-		this.#TOKEN_EXPIRATION_TIME = Date.now() + (expires * 1000);
-	}
+		this.#TOKEN_EXPIRATION_TIME = Date.now() + milisecondsUntilExpiration;
+		return milisecondsUntilExpiration;
+	};
 
 	/**
 	 * Gets a new WS Token if the current one is invalid
 	 */
-	stayFresh() {
+	stayFresh = async () => {
 		if (this.isFresh) {
 			return;
 		} else {
-			return this.getWsToken();
+			const refreshTimer = await this.getWsToken();
+			this.#REFRESH_INTERVAL = setInterval(this.getWsToken, refreshTimer-15000);
 		}
-	}
-
-	/**
-	 * Executes when a "OpenOrders" event is recieved from host
-	 * Logs message be default. This can be configured by defining the "onOpenOrdersHandler" property.
-	 * 
-	 * Details on message format can be found in the Kraken docs -> https://docs.kraken.com/websockets/#message-openOrders
-	 * @param {any} data 
-	 */ /* istanbul ignore next: only logs by default */
-	onOpenOrdersEvent(data) {
-		this.logger(data);
-	}
-
-	/**
-	 * Executes when a "ownTrades" event is recieved from host
-	 * Logs message be default. This can be configured by defining the "onOwnTradesHandler" property.
-	 * 
-	 * Details on message format can be found in the Kraken docs -> https://docs.kraken.com/websockets/#message-ownTrades
-	 * @param {any} data 
-	 */ /* istanbul ignore next: only logs by default */
-	onOwnTradesEvent(data) {
-		this.logger(data);
-	}
+	};
 
 	/**
 	 * Handles subscribing or unsubscribing to channels.
@@ -76,23 +69,53 @@ class KrakenPrivateChannel extends KrakenPub {
 	 * 
 	 * @fires websocket.send() sends the formated payload to the Kraken websocket service
 	 */
-	privateSubscriptionService(subscribe, name, options = {}) {
-		this.stayFresh();
-		return this.subscriptionService(subscribe, name, null, { ...options, token: this.#WS_TOKEN });
-	}
+	subscriptionService = async (subscribe, name, options = {}) => {
+		await this.stayFresh();
+
+		const payload = {
+			event: subscribe,
+			subscription: {
+				name,
+				token: this.#WS_TOKEN
+			}
+		};
+		Object.keys(options).forEach(option => payload.subscription[option] = options[option]);
+
+		return this.emitEvent(payload);
+	};
+
+	/**
+	 * Formats and logs changes to a subscription status
+	 * 
+	 * @param {Object} data new status event from host
+	 */
+	onSubscriptionStatusEvent = (data) => {
+		const { channelName, status } = data;
+		if (status === 'error') throw new Error(data.errorMessage);
+
+		this.subscriptions[channelName] = {
+			status,
+			lastUpdated: Date.now(),
+			...data.subscription
+		};
+
+		this.logger(data);
+		return data;
+	};
 
 	/**
 	 * Generic function to create order of any type
 	 * req/res details can be found in the Kraken docs -> https://docs.kraken.com/websockets/#message-addOrder
+	 * more info on what each options property is used for can be found in the REST api docs -> https://docs.kraken.com/rest/#operation/addOrder
 	 * 
 	 * @param {object} options 
 	 * @param {string} options.ordertype Order type - market|limit|stop-loss|take-profit|stop-loss-limit|take-profit-limit|settle-position
 	 * @param {string} options.type Side, buy or sell
 	 * @param {string} options.pair Currency pair
-	 * @param {float} options.price Optional dependent on order type - order price
-	 * @param {float} options.price2 Optional dependent on order type - order secondary price
-	 * @param {float} options.volume Order volume in lots
-	 * @param {float} options.leverage amount of leverage desired (optional; default = none)
+	 * @param {string} options.price Optional dependent on order type - order price
+	 * @param {string} options.price2 Optional dependent on order type - order secondary price
+	 * @param {string} options.volume Order volume in lots
+	 * @param {string} options.leverage amount of leverage desired (optional; default = none)
 	 * @param {string} options.oflags Optional - comma delimited list of order flags. viqc = volume in quote currency (not currently available), fcib = prefer fee in base currency, fciq = prefer fee in quote currency, nompp = no market price protection, post = post only order (available when ordertype = limit)
 	 * @param {string} options.starttm Optional - scheduled start time. 0 = now (default) +<n> = schedule start time <n> seconds from now <n> = unix timestamp of start time
 	 * @param {string} options.expiretm Optional - expiration time. 0 = no expiration (default) +<n> = expire <n> seconds from now <n> = unix timestamp of expiration time
@@ -105,8 +128,8 @@ class KrakenPrivateChannel extends KrakenPub {
 	 * @param {string} options.timeinforce Optional - time in force. Supported values include GTC (good-til-cancelled; default), IOC (immediate-or-cancel), GTD (good-til-date; expiretm must be specified).
 	 * @param {number} reqid Optional - client originated requestID sent as acknowledgment in the message response
 	 */
-	addOrder(options, reqid) {
-		this.stayFresh();
+	addOrder = async (options, reqid) => {
+		await this.stayFresh();
 		const payload = {
 			event: 'addOrder',
 			token: this.#WS_TOKEN,
@@ -114,9 +137,8 @@ class KrakenPrivateChannel extends KrakenPub {
 		};
 		Object.keys(options).forEach(option => payload[option] = options[option]);
 		this.emitEvent(payload);
-	}
-	// TODO: Create function for market order
-	// TODO: Create function for limit order
+	};
+
 	// TODO: Create function for stop-loss order
 	// TODO: Create function for take-profit order
 	// TODO: Create function for stop-loss-limit order
@@ -130,15 +152,15 @@ class KrakenPrivateChannel extends KrakenPub {
 	 * @param {string[]} txid Array of order IDs to be canceled. These can be user reference IDs.
 	 * @param {number} reqid Optional - client originated requestID sent as acknowledgment in the message response
 	 */
-	cancelOrder(txid, reqid) {
-		this.stayFresh();
+	cancelOrder = async (txid, reqid) => {
+		await this.stayFresh();
 		this.emitEvent({
 			event: 'cancelOrder',
 			token: this.#WS_TOKEN,
 			txid,
 			reqid
 		});
-	}
+	};
 
 	/**
 	 * Cancel all open orders. Includes partially-filled orders.
@@ -146,14 +168,14 @@ class KrakenPrivateChannel extends KrakenPub {
 	 * 
 	 * @param {number} reqid Optional - client originated requestID sent as acknowledgment in the message response
 	 */
-	cancelAllOrders(reqid) {
-		this.stayFresh();
+	cancelAllOrders = async (reqid) => {
+		await this.stayFresh();
 		this.emitEvent({
 			event: 'cancelAll',
 			token: this.#WS_TOKEN,
 			reqid
 		});
-	}
+	};
 
 	/**
 	 *  Shut-off mechanism to protect the client from network malfunction, extreme latency or unexpected matching engine downtime.
@@ -161,11 +183,11 @@ class KrakenPrivateChannel extends KrakenPub {
 	 * 
 	 * @param {number} timeout Timeout specified in seconds. 0 to disable the timer.
 	 */
-	cancelAllOrdersAfter(timeout) {
-		this.stayFresh();
+	cancelAllOrdersAfter = async (timeout) => {
+		await this.stayFresh();
 		const payload = { event: 'cancelAllOrdersAfter', token: this.#WS_TOKEN, timeout };
 		this.emitEvent(payload);
-	}
+	};
 
 	get isFresh() {
 		return !!this.#WS_TOKEN && Date.now() < this.#TOKEN_EXPIRATION_TIME;
@@ -174,23 +196,24 @@ class KrakenPrivateChannel extends KrakenPub {
 	/**
 	 * @param {() => any} fn 
 	 */ /* istanbul ignore next */
-	set onOpenOrdersHandler(fn) {
-		if (typeof fn === 'function') this.onOpenOrdersEvent = fn;
+	set onOpenOrdersEvent(fn) {
+		if (typeof fn === 'function') this.channels['openOrders'] = fn;
 		else throw nonFunctionError(fn);
 	}
 
 	/**
 	 * @param {() => any} fn 
 	 */ /* istanbul ignore next */
-	set onOwnTradesHandler(fn) {
-		if (typeof fn === 'function') this.onOwnTradesEvent = fn;
+	set onOwnTradesEvent(fn) {
+		if (typeof fn === 'function') this.channels['ownTrades'] = fn;
 		else throw nonFunctionError(fn);
 	}
 
 	/**
+	 * Used for debugging
 	 * @param {string} token 
 	 */ /* istanbul ignore next */
-	setWsToken(token) {
+	set wsToken(token) {
 		this.#WS_TOKEN = token;
 	}
 }
